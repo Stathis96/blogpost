@@ -3,8 +3,67 @@ const express = require('express');
 const morgan = require('morgan')
 const mongoose = require('mongoose')
 const blogRoutes = require('./routes/blogRoutes')
+const axios = require('axios');
 //express app
+const DEFAULT_EXPIRATION = 3600
 const app = express();
+
+const redis = require('redis')
+const redisClient = redis.createClient() 
+
+
+
+//redis check ,testing with Postman on http://localhost:3000/photos?albumId=2 e.g.
+app.get("/photos", async( req, res) => {
+  const albumId = req.query.albumId
+  // const photos = await getOrSetCache(`photos?albumId=${albumId}`,async () => {
+    // const { data } = await axios.get(
+    //   "https://jsonplaceholder.typicode.com/photos",
+    //   { params: { albumId} }
+    //   )
+    // return data }) 
+    // res.json(photos)
+  // redisClient.get('photos',async(error,photos) => { simpler way just the photos
+    redisClient.get(`photos?albumId=${albumId}`,async(error,photos) => {
+    if (error) console.log(error);
+    if (photos != null ){
+      console.log("Cache Hit")
+      return res.json(JSON.parse(photos))
+    }else {
+      console.log("Cache Miss")
+      const { data } = await axios.get(
+        "https://jsonplaceholder.typicode.com/photos",
+        { params: { albumId} }
+        )
+      // redisClient.setex('photos', DEFAULT_EXPIRATION, JSON.stringify(data))
+      redisClient.setex(`photos?albumId=${albumId}`, DEFAULT_EXPIRATION, JSON.stringify(data))
+      res.json(data)
+    }
+  })
+})
+
+
+app.get("/photos/:id", async(req,res)=>{
+    const photo = await getOrSetCache(`photos:${req.params.id}`,async () => {
+      const { data } = await axios.get(
+        `https://jsonplaceholder.typicode.com/photos/${req.params.id}`
+      )
+    return data 
+  })
+  res.json(photo)
+})
+
+function getOrSetCache(key, cb){
+  return new Promise((resolve, reject) => {
+    redisClient.get(key, async (error, data) =>{
+      if (error) return reject(error)
+      if (data != null) return resolve(JSON.parse(data))
+      const freshData = await cb()
+      redisClient.setex(key, DEFAULT_EXPIRATION, JSON.stringify(freshData))
+      resolve(freshData)
+    })
+  })
+}
 
 //connect to mongoDB
 const dbURI = 'mongodb+srv://snissninja:loko1234@cluster0.vqumt.mongodb.net/node-tuts?retryWrites=true&w=majority'
@@ -15,6 +74,8 @@ mongoose.connect(dbURI, { useNewUrlParser: true, useUnifiedTopology: true})
       app.listen(3000); 
   })
   .catch((err) => console.log(err));
+
+
 
 //register view engine
 app.set('view engine', 'ejs')
